@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>主要指数估值数据看板 / Major Indices Valuation Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .tab-btn { transition: all 0.2s ease-in-out; }
+        [v-cloak] { display: none; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen pb-12">
+    <div class="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-800" data-i18n="title">主要指数估值数据看板</h1>
+                <p class="text-sm text-slate-500 mt-1" data-i18n="subtitle">基于核心指数数据分析估值、股息率及历史分位水平</p>
+            </div>
+            <div class="flex items-center gap-4 mt-4 md:mt-0">
+                <span class="text-sm text-slate-500 font-medium" id="lastUpdatedLabel">最后更新: -</span>
+                <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                    <span data-i18n="uploadBtn">加载 data.csv</span>
+                    <input type="file" id="fileInput" accept=".csv" class="sr-only">
+                </label>
+                <div class="flex bg-slate-100 p-1 rounded-lg">
+                    <button id="langZh" class="px-3 py-1 rounded-md text-sm font-medium bg-white shadow-sm text-slate-800" onclick="setLanguage('zh')">中文</button>
+                    <button id="langEn" class="px-3 py-1 rounded-md text-sm font-medium text-slate-500 hover:text-slate-800" onclick="setLanguage('en')">EN</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters (Market & Index Type) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 mb-6">
+            <div class="flex items-center mb-4">
+                <span class="w-24 text-sm font-semibold text-slate-600" data-i18n="marketDim">市场维度：</span>
+                <div id="marketFilters" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="flex items-center">
+                <span class="w-24 text-sm font-semibold text-slate-600" data-i18n="indexDim">指数维度：</span>
+                <div id="typeFilters" class="flex flex-wrap gap-2"></div>
+            </div>
+        </div>
+
+        <!-- KPIs -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <!-- Dual High -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+                <h3 class="text-sm font-semibold text-slate-500 mb-2" data-i18n="kpi1">双高估值 (PE>60% & PB>60%)</h3>
+                <div class="flex items-baseline gap-2">
+                    <span id="kpi1-val" class="text-3xl font-bold text-red-500">0</span>
+                    <span class="text-sm text-slate-500"><span data-i18n="countUnit">个</span> (<span id="kpi1-pct">0.0</span>%)</span>
+                </div>
+            </div>
+            <!-- Dual Low -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+                <h3 class="text-sm font-semibold text-slate-500 mb-2" data-i18n="kpi2">双低估值 (PE≤30% & PB≤30%)</h3>
+                <div class="flex items-baseline gap-2">
+                    <span id="kpi2-val" class="text-3xl font-bold text-green-500">0</span>
+                    <span class="text-sm text-slate-500"><span data-i18n="countUnit">个</span> (<span id="kpi2-pct">0.0</span>%)</span>
+                </div>
+            </div>
+            <!-- Highest -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+                <h3 class="text-sm font-semibold text-slate-500 mb-2" data-i18n="kpi3">最高估指数 (PE+PB分位和)</h3>
+                <div>
+                    <div id="kpi3-name" class="text-xl font-bold text-orange-500 truncate">-</div>
+                    <div id="kpi3-desc" class="text-xs text-slate-500 mt-1">-</div>
+                </div>
+            </div>
+            <!-- Lowest -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+                <h3 class="text-sm font-semibold text-slate-500 mb-2" data-i18n="kpi4">最低估指数 (PE+PB分位和)</h3>
+                <div>
+                    <div id="kpi4-name" class="text-xl font-bold text-blue-500 truncate">-</div>
+                    <div id="kpi4-desc" class="text-xs text-slate-500 mt-1">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Valuation Filters (Capsule Tabs) -->
+        <div class="flex justify-center mb-6">
+            <div class="flex bg-white p-1 rounded-full shadow-sm border border-slate-200">
+                <button id="tab-all" onclick="setValuationTab('all')" class="tab-btn px-6 py-2 rounded-full text-sm font-semibold bg-slate-700 text-white" data-i18n="tabAll">所有指数</button>
+                <button id="tab-low" onclick="setValuationTab('low')" class="tab-btn px-6 py-2 rounded-full text-sm font-semibold text-green-600 hover:bg-green-50" data-i18n="tabLow">低估指数</button>
+                <button id="tab-high" onclick="setValuationTab('high')" class="tab-btn px-6 py-2 rounded-full text-sm font-semibold text-red-500 hover:bg-red-50" data-i18n="tabHigh">高估指数</button>
+            </div>
+        </div>
+
+        <!-- Charts Area -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100" style="height: 500px;">
+                <canvas id="chart5y"></canvas>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100" style="height: 500px;">
+                <canvas id="chart10y"></canvas>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="bg-slate-50 text-slate-600 font-medium border-b border-slate-100">
+                        <tr>
+                            <th class="px-4 py-3" data-i18n="tableMarket">市场</th>
+                            <th class="px-4 py-3" data-i18n="tableIndex">指数</th>
+                            <th class="px-4 py-3 text-right" data-i18n="tablePE">PE(TTM)</th>
+                            <th class="px-4 py-3 text-right" data-i18n="tablePE5">5年分位(%)</th>
+                            <th class="px-4 py-3 text-right" data-i18n="tablePE10">10年分位(%)</th>
+                            <th class="px-4 py-3 text-right" data-i18n="tablePB">PB(LF)</th>
+                            <th class="px-4 py-3 text-right" data-i18n="tablePB5">PB 5年分位(%)</th>
+                            <th class="px-4 py-3 text-right" data-i18n="tablePB10">PB 10年分位(%)</th>
+                            <th class="px-4 py-3 text-right" data-i18n="tableDiv">股息率(%)</th>
+                            <th class="px-4 py-3 text-center" data-i18n="tableRating">综合评级</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-100 text-slate-700">
+                        <!-- Rendered by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        Chart.register(ChartDataLabels);
+
+        /* --- I18n Dictionary --- */
+        const i18n = {
+            zh: {
+                title: "主要指数估值数据看板",
+                subtitle: "基于核心指数数据分析估值、股息率及历史分位水平",
+                uploadBtn: "加载 data.csv",
+                lastUpdated: "最后更新: ",
+                global: "全球",
+                all: "全部",
+                marketDim: "市场维度：",
+                indexDim: "指数维度：",
+                kpi1: "双高估值 (PE>60% & PB>60%)",
+                kpi2: "双低估值 (PE≤30% & PB≤30%)",
+                kpi3: "最高估指数 (PE+PB分位和)",
+                kpi4: "最低估指数 (PE+PB分位和)",
+                tabAll: "所有指数",
+                tabLow: "低估指数",
+                tabHigh: "高估指数",
+                pepb5y: "PE与PB 5年历史分位分布",
+                pepb10y: "PE与PB 10年历史分位分布",
+                tableMarket: "市场",
+                tableIndex: "指数",
+                tablePE: "PE(TTM)",
+                tablePE5: "5年分位(%)",
+                tablePE10: "10年分位(%)",
+                tablePB: "PB(LF)",
+                tablePB5: "PB 5年分位(%)",
+                tablePB10: "PB 10年分位(%)",
+                tableDiv: "股息率(%)",
+                tableRating: "综合评级",
+                countUnit: "个",
+                propUnit: "占比",
+                noData: "暂无数据",
+                axisPE: "PE 分位 (%)",
+                axisPB: "PB 分位 (%)",
+                ratingExLow: "极低",
+                ratingLow: "偏低",
+                ratingMid: "中等",
+                ratingHigh: "偏高",
+                ratingExHigh: "极高"
+            },
+            en: {
+                title: "Major Indices Valuation Dashboard",
+                subtitle: "Analysis of Valuation, Dividend Yield & Historical Percentiles",
+                uploadBtn: "Load data.csv",
+                lastUpdated: "Last Updated: ",
+                global: "Global",
+                all: "All",
+                marketDim: "Market: ",
+                indexDim: "Index Type: ",
+                kpi1: "Dual Overvalued (>60%)",
+                kpi2: "Dual Undervalued (≤30%)",
+                kpi3: "Most Overvalued Index",
+                kpi4: "Most Undervalued Index",
+                tabAll: "All Indices",
+                tabLow: "Undervalued",
+                tabHigh: "Overvalued",
+                pepb5y: "PE & PB 5-Year Percentiles",
+                pepb10y: "PE & PB 10-Year Percentiles",
+                tableMarket: "Market",
+                tableIndex: "Index",
+                tablePE: "PE(TTM)",
+                tablePE5: "PE 5Y(%)",
+                tablePE10: "PE 10Y(%)",
+                tablePB: "PB(LF)",
+                tablePB5: "PB 5Y(%)",
+                tablePB10: "PB 10Y(%)",
+                tableDiv: "Div Yield(%)",
+                tableRating: "Overall Rating",
+                countUnit: " ",
+                propUnit: "prop",
+                noData: "No Data",
+                axisPE: "PE Percentile (%)",
+                axisPB: "PB Percentile (%)",
+                ratingExLow: "Ex-Low",
+                ratingLow: "Low",
+                ratingMid: "Mid",
+                ratingHigh: "High",
+                ratingExHigh: "Ex-High"
+            }
+        };
+
+        const nameMapEn = {
+            "全球": "Global", "A股": "A-Share", "港股": "HK-Share", "美股": "US-Share",
+            "宽基指数": "Broad Market", "行业指数": "Sector", "宽基": "Broad", "行业": "Sector",
+            "极高": "Ex-High", "偏高": "High", "高估": "Overvalued", "中等": "Moderate", 
+            "正常": "Normal", "偏低": "Low", "低估": "Undervalued", "极低": "Ex-Low",
+            "上证指数": "SSE Comp", "沪深300": "CSI 300", "上证50": "SSE 50", "中证500": "CSI 500",
+            "创业板指": "ChiNext", "科创50": "STAR 50", "中证银行": "CSI Bank", "中证白酒": "CSI Liquor",
+            "中证医药": "CSI Medical", "中证消费": "CSI Cons", "恒生科技": "HS Tech", "国企指数": "HSCEI",
+            "标普500": "S&P 500", "纳指100": "Nasdaq 100", "道琼斯": "Dow Jones"
+        };
+
+        /* --- Global State --- */
+        const appState = {
+            lang: 'zh',
+            market: '全球',
+            type: '全部',
+            valuationTab: 'all', // all | low | high
+            raw: [],
+            filtered: [],
+            lastUpdated: new Date().toISOString().split('T')[0]
+        };
+
+        let chart5y = null;
+        let chart10y = null;
+
+        /* --- Helper Functions --- */
+        const t = (key) => i18n[appState.lang][key] || key;
+        const tName = (str) => appState.lang === 'zh' ? str : (nameMapEn[str] || str);
+
+        const parseFloatStr = (val) => {
+            if(!val) return 0;
+            return parseFloat(String(val).replace(/[%,\s]/g, '')) || 0;
+        };
+
+        function getRatingColor(rating) {
+            if(/极高/.test(rating)) return { bg: 'rgba(239,68,68,0.8)', border: '#ef4444', badge: 'bg-red-100 text-red-700' };
+            if(/偏高|高估/.test(rating)) return { bg: 'rgba(249,115,22,0.8)', border: '#f97316', badge: 'bg-orange-100 text-orange-700' };
+            if(/中等|正常/.test(rating)) return { bg: 'rgba(156,163,175,0.8)', border: '#9ca3af', badge: 'bg-slate-100 text-slate-700' };
+            if(/偏低|低估/.test(rating)) return { bg: 'rgba(132,204,22,0.8)', border: '#84cc16', badge: 'bg-lime-100 text-lime-700' };
+            if(/极低/.test(rating)) return { bg: 'rgba(34,197,94,0.8)', border: '#22c55e', badge: 'bg-green-100 text-green-700' };
+            return { bg: 'rgba(156,163,175,0.8)', border: '#9ca3af', badge: 'bg-slate-100 text-slate-700' };
+        }
+
+        /* --- Custom Chart Plugin for Heatmap Background --- */
+        const heatmapPlugin = {
+            id: 'heatmapBg',
+            beforeDraw: (chart) => {
+                const { ctx, chartArea, scales: { x, y } } = chart;
+                if (!chartArea) return;
+                ctx.save();
+                
+                const zones = [0, 10, 30, 60, 80, 100];
+                const labels = ["ratingExLow", "ratingLow", "ratingMid", "ratingHigh", "ratingExHigh"];
+
+                // Draw Dashed Grid Lines
+                ctx.strokeStyle = 'rgba(150, 150, 150, 0.4)';
+                ctx.setLineDash([4, 4]);
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                [10, 30, 60, 80].forEach(val => {
+                    // X lines
+                    if(val > x.min && val < x.max) {
+                        const px = x.getPixelForValue(val);
+                        ctx.moveTo(px, chartArea.bottom);
+                        ctx.lineTo(px, chartArea.top);
+                    }
+                    // Y lines
+                    if(val > y.min && val < y.max) {
+                        const py = y.getPixelForValue(val);
+                        ctx.moveTo(chartArea.left, py);
+                        ctx.lineTo(chartArea.right, py);
+                    }
+                });
+                ctx.stroke();
+
+                // Fill Background Grid Zones
+                for(let i=0; i<5; i++) {
+                    for(let j=0; j<5; j++) {
+                        const xS = Math.max(x.min, zones[i]);
+                        const xE = Math.min(x.max, zones[i+1]);
+                        const yS = Math.max(y.min, zones[j]);
+                        const yE = Math.min(y.max, zones[j+1]);
+
+                        if(xS < xE && yS < yE) {
+                            const px1 = x.getPixelForValue(xS);
+                            const px2 = x.getPixelForValue(xE);
+                            const py1 = y.getPixelForValue(yS);
+                            const py2 = y.getPixelForValue(yE); // py2 is visually higher because Y goes down
+
+                            const score = i + j; // ranges 0 to 8
+                            let color = 'transparent';
+                            if(score <= 2) color = 'rgba(34, 197, 94, 0.08)'; // Green tint
+                            else if(score >= 6) color = 'rgba(239, 68, 68, 0.08)'; // Red tint
+
+                            if(color !== 'transparent') {
+                                ctx.fillStyle = color;
+                                ctx.fillRect(px1, py2, px2 - px1, py1 - py2);
+                            }
+                        }
+                    }
+                }
+
+                // Draw axis labels OUTSIDE the chartArea
+                ctx.fillStyle = '#64748b';
+                ctx.font = '12px -apple-system, sans-serif';
+                ctx.setLineDash([]);
+                
+                // X axis top labels
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                for(let i=0; i<5; i++) {
+                    const cX = (zones[i] + zones[i+1]) / 2;
+                    if (cX >= x.min && cX <= x.max) {
+                        ctx.fillText(t(labels[i]), x.getPixelForValue(cX), chartArea.top - 6);
+                    }
+                }
+
+                // Y axis right labels
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                for(let j=0; j<5; j++) {
+                    const cY = (zones[j] + zones[j+1]) / 2;
+                    if (cY >= y.min && cY <= y.max) {
+                        ctx.fillText(t(labels[j]), chartArea.right + 6, y.getPixelForValue(cY));
+                    }
+                }
+
+                ctx.restore();
+            }
+        };
+
+        /* --- Initialization & Charts --- */
+        function initCharts() {
+            const getChartOpts = (titleKey) => ({
+                responsive: true,
+                maintainAspectRatio: false,
+                layout: { padding: { top: 25, right: 40, bottom: 20, left: 10 } },
+                plugins: {
+                    title: { display: true, text: t(titleKey), font: { size: 15, weight: 'bold' }, color: '#334155' },
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => `${tName(ctx.raw.name)} | PE: ${ctx.raw.x.toFixed(1)}% | PB: ${ctx.raw.y.toFixed(1)}%`
+                        }
+                    },
+                    datalabels: {
+                        align: 'top', offset: 8,
+                        formatter: (val) => tName(val.name),
+                        font: { size: 11, weight: 500 },
+                        color: '#475569'
+                    }
+                },
+                scales: {
+                    x: { min: 0, max: 100, title: { display: true, text: t('axisPE'), color: '#64748b' } },
+                    y: { min: 0, max: 100, title: { display: true, text: t('axisPB'), color: '#64748b' } }
+                }
+            });
+
+            chart5y = new Chart(document.getElementById('chart5y'), {
+                type: 'scatter',
+                data: { datasets: [{ data: [] }] },
+                options: getChartOpts('pepb5y'),
+                plugins: [heatmapPlugin]
+            });
+
+            chart10y = new Chart(document.getElementById('chart10y'), {
+                type: 'scatter',
+                data: { datasets: [{ data: [] }] },
+                options: getChartOpts('pepb10y'),
+                plugins: [heatmapPlugin]
+            });
+        }
+
+        /* --- Auto Load Local CSV --- */
+        function autoLoadData() {
+            fetch('data.csv')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error("HTTP error " + response.status);
+                    }
+                    return response.text();
+                })
+                .then(csvText => {
+                    Papa.parse(csvText, {
+                        header: true,
+                        skipEmptyLines: true,
+                        complete: function(results) {
+                            if (results.errors.length && results.data.length === 0) {
+                                console.warn("Auto-load failed or empty dataset.");
+                                return;
+                            }
+                            processRawData(results.data);
+                        }
+                    });
+                })
+                .catch(error => {
+                    console.log("Could not auto-load data.csv (this is normal if the file doesn't exist yet):", error);
+                });
+        }
+
+        /* --- Data Processing --- */
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    if (results.errors.length && results.data.length === 0) {
+                        alert("Data parsing failed / 数据解析失败");
+                        return;
+                    }
+                    processRawData(results.data);
+                    e.target.value = ''; // Reset input to allow re-upload
+                }
+            });
+        });
+
+        function processRawData(rows) {
+            if(rows.length === 0) return;
+            const headers = Object.keys(rows[0]);
+            const mapped = [];
+            let foundDate = "";
+
+            rows.forEach(row => {
+                const clean = {};
+                for(let k in row) {
+                    // Robust sanitization: remove BOM, whitespace, parenthesis, %, and lower case
+                    const newKey = k.replace(/[\uFEFF\s\(\)（）%]/g, '').toLowerCase();
+                    clean[newKey] = row[k];
+                }
+
+                let category = clean['分类'] || clean['category'] || '';
+                let market = 'A股';
+                if(category.includes('港股')) market = '港股';
+                else if(category.includes('美股')) market = '美股';
+
+                let type = '其它';
+                if(category.includes('行业')) type = '行业指数';
+                else if(category.includes('宽基')) type = '宽基指数';
+
+                let name = clean['name'] || clean['指数名称'] || clean['名称'] || '';
+                if(!name) return; // Skip empty names
+
+                let pe = parseFloatStr(clean['pe'] || clean['pettm']);
+                let pe5y = parseFloatStr(clean['pe5y'] || clean['pe5年分位']);
+                let pe10y = parseFloatStr(clean['pe10y'] || clean['pe10年分位']);
+                let pb = parseFloatStr(clean['pb'] || clean['pblf']);
+                let pb5y = parseFloatStr(clean['pb5y'] || clean['pb5年分位']);
+                let pb10y = parseFloatStr(clean['pb10y'] || clean['pb10年分位']);
+                let div = parseFloatStr(clean['div'] || clean['股息率']);
+                let rating = clean['rating'] || clean['估值评级'] || clean['评级'] || '正常';
+                
+                let rawDate = clean['date'] || clean['收盘日期'] || clean['日期'] || '';
+                if(!foundDate && rawDate) {
+                    const m = rawDate.match(/\d{4}-\d{2}-\d{2}/);
+                    if(m) foundDate = m[0];
+                    else foundDate = String(rawDate).trim();
+                }
+
+                mapped.push({ market, type, name, pe, pe5y, pe10y, pb, pb5y, pb10y, div, rating });
+            });
+
+            if(mapped.length === 0) {
+                alert(`Error: Parsed empty dataset. Cleaned Headers detected: ${headers.join(', ')}`);
+                return;
+            }
+
+            appState.raw = mapped;
+            appState.lastUpdated = foundDate || new Date().toISOString().split('T')[0];
+            
+            buildDynamicFilters();
+            applyFiltersAndRender();
+            updateI18nUI();
+        }
+
+        /* --- Rendering & Interactions --- */
+        function buildDynamicFilters() {
+            const markets = new Set();
+            const types = new Set();
+            appState.raw.forEach(d => { markets.add(d.market); types.add(d.type); });
+
+            const mkContainer = document.getElementById('marketFilters');
+            const tyContainer = document.getElementById('typeFilters');
+            mkContainer.innerHTML = ''; tyContainer.innerHTML = '';
+
+            const createBtn = (val, current, isGlobalAll, onClick) => {
+                const btn = document.createElement('button');
+                btn.className = `px-3 py-1 text-sm font-medium rounded-full transition-colors ${val === current ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`;
+                btn.innerText = isGlobalAll ? t(val === '全球' ? 'global' : 'all') : tName(val);
+                btn.onclick = onClick;
+                return btn;
+            };
+
+            // Market Row
+            mkContainer.appendChild(createBtn('全球', appState.market, true, () => { appState.market = '全球'; applyFiltersAndRender(); buildDynamicFilters(); }));
+            markets.forEach(m => {
+                mkContainer.appendChild(createBtn(m, appState.market, false, () => { appState.market = m; applyFiltersAndRender(); buildDynamicFilters(); }));
+            });
+
+            // Type Row
+            tyContainer.appendChild(createBtn('全部', appState.type, true, () => { appState.type = '全部'; applyFiltersAndRender(); buildDynamicFilters(); }));
+            types.forEach(t => {
+                tyContainer.appendChild(createBtn(t, appState.type, false, () => { appState.type = t; applyFiltersAndRender(); buildDynamicFilters(); }));
+            });
+        }
+
+        function setValuationTab(tab) {
+            appState.valuationTab = tab;
+            
+            // UI Toggle
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.className = 'tab-btn px-6 py-2 rounded-full text-sm font-semibold';
+                if(el.id === 'tab-all') el.classList.add(tab === 'all' ? 'bg-slate-700' : 'text-slate-600', tab === 'all' ? 'text-white' : 'hover:bg-slate-100');
+                if(el.id === 'tab-low') el.classList.add(tab === 'low' ? 'bg-green-100' : 'text-green-600', tab === 'low' ? 'text-green-800' : 'hover:bg-green-50');
+                if(el.id === 'tab-high') el.classList.add(tab === 'high' ? 'bg-red-100' : 'text-red-500', tab === 'high' ? 'text-red-800' : 'hover:bg-red-50');
+            });
+
+            applyFiltersAndRender();
+        }
+
+        function applyFiltersAndRender() {
+            let filtered = appState.raw.filter(d => {
+                const mMatch = appState.market === '全球' || d.market === appState.market;
+                const tMatch = appState.type === '全部' || d.type === appState.type;
+                return mMatch && tMatch;
+            });
+
+            let scaleMin = 0, scaleMax = 100;
+            if(appState.valuationTab === 'low') {
+                filtered = filtered.filter(d => /极低|偏低|低估/.test(d.rating));
+                scaleMin = 0; scaleMax = 60;
+            } else if (appState.valuationTab === 'high') {
+                filtered = filtered.filter(d => /极高|偏高|高估/.test(d.rating));
+                scaleMin = 60; scaleMax = 100;
+            }
+            appState.filtered = filtered;
+
+            renderKPIs();
+            renderCharts(scaleMin, scaleMax);
+            renderTable();
+            document.getElementById('lastUpdatedLabel').innerText = t('lastUpdated') + appState.lastUpdated;
+        }
+
+        function renderKPIs() {
+            const data = appState.filtered;
+            const total = data.length || 1;
+            
+            const dualHigh = data.filter(d => d.pe5y > 60 && d.pb5y > 60);
+            const dualLow = data.filter(d => d.pe5y <= 30 && d.pb5y <= 30);
+
+            document.getElementById('kpi1-val').innerText = dualHigh.length;
+            document.getElementById('kpi1-pct').innerText = ((dualHigh.length / total) * 100).toFixed(1);
+            
+            document.getElementById('kpi2-val').innerText = dualLow.length;
+            document.getElementById('kpi2-pct').innerText = ((dualLow.length / total) * 100).toFixed(1);
+
+            let maxVal = -1, minVal = 9999;
+            let maxItem = null, minItem = null;
+
+            data.forEach(d => {
+                const sum = d.pe5y + d.pb5y;
+                if(sum > maxVal) { maxVal = sum; maxItem = d; }
+                if(sum < minVal) { minVal = sum; minItem = d; }
+            });
+
+            const formatKpiStr = (item) => item ? `PE: ${item.pe.toFixed(2)} (${item.pe5y.toFixed(1)}%) | PB: ${item.pb.toFixed(2)} (${item.pb5y.toFixed(1)}%)` : '-';
+            
+            document.getElementById('kpi3-name').innerText = maxItem ? tName(maxItem.name) : '-';
+            document.getElementById('kpi3-desc').innerText = formatKpiStr(maxItem);
+
+            document.getElementById('kpi4-name').innerText = minItem ? tName(minItem.name) : '-';
+            document.getElementById('kpi4-desc').innerText = formatKpiStr(minItem);
+        }
+
+        function renderCharts(minVal, maxVal) {
+            const updateC = (chart, xKey, yKey) => {
+                chart.data.datasets = [{
+                    data: appState.filtered.map(d => ({ x: d[xKey], y: d[yKey], name: d.name, raw: d })),
+                    backgroundColor: appState.filtered.map(d => getRatingColor(d.rating).bg),
+                    borderColor: appState.filtered.map(d => getRatingColor(d.rating).border),
+                    borderWidth: 1,
+                    pointRadius: 6,
+                    pointHoverRadius: 8
+                }];
+                chart.options.scales.x.min = minVal;
+                chart.options.scales.x.max = maxVal;
+                chart.options.scales.y.min = minVal;
+                chart.options.scales.y.max = maxVal;
+                chart.update();
+            };
+            updateC(chart5y, 'pe5y', 'pb5y');
+            updateC(chart10y, 'pe10y', 'pb10y');
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            if(appState.filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="10" class="px-4 py-8 text-center text-slate-400">${t('noData')}</td></tr>`;
+                return;
+            }
+
+            appState.filtered.forEach(d => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-slate-50 transition-colors';
+                const style = getRatingColor(d.rating);
+                
+                row.innerHTML = `
+                    <td class="px-4 py-3">${tName(d.market)}</td>
+                    <td class="px-4 py-3 font-medium text-slate-900">${tName(d.name)}</td>
+                    <td class="px-4 py-3 text-right">${d.pe.toFixed(2)}</td>
+                    <td class="px-4 py-3 text-right">${d.pe5y.toFixed(2)}%</td>
+                    <td class="px-4 py-3 text-right">${d.pe10y.toFixed(2)}%</td>
+                    <td class="px-4 py-3 text-right">${d.pb.toFixed(2)}</td>
+                    <td class="px-4 py-3 text-right">${d.pb5y.toFixed(2)}%</td>
+                    <td class="px-4 py-3 text-right">${d.pb10y.toFixed(2)}%</td>
+                    <td class="px-4 py-3 text-right">${d.div.toFixed(2)}%</td>
+                    <td class="px-4 py-3 text-center">
+                        <span class="px-2 py-1 rounded-md text-xs font-semibold ${style.badge}">${tName(d.rating)}</span>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        /* --- I18n Switcher --- */
+        function setLanguage(lang) {
+            appState.lang = lang;
+            
+            // Buttons style
+            document.getElementById('langZh').className = `px-3 py-1 rounded-md text-sm font-medium ${lang==='zh' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`;
+            document.getElementById('langEn').className = `px-3 py-1 rounded-md text-sm font-medium ${lang==='en' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`;
+
+            updateI18nUI();
+            if(appState.raw.length > 0) {
+                buildDynamicFilters();
+                applyFiltersAndRender();
+            }
+        }
+
+        function updateI18nUI() {
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (i18n[appState.lang][key]) {
+                    el.innerText = i18n[appState.lang][key];
+                }
+            });
+
+            // Update Chart Titles & Axes
+            if(chart5y && chart10y) {
+                chart5y.options.plugins.title.text = t('pepb5y');
+                chart5y.options.scales.x.title.text = t('axisPE');
+                chart5y.options.scales.y.title.text = t('axisPB');
+                chart5y.update();
+                
+                chart10y.options.plugins.title.text = t('pepb10y');
+                chart10y.options.scales.x.title.text = t('axisPE');
+                chart10y.options.scales.y.title.text = t('axisPB');
+                chart10y.update();
+            }
+
+            document.getElementById('lastUpdatedLabel').innerText = t('lastUpdated') + appState.lastUpdated;
+        }
+
+        // Init
+        window.onload = () => {
+            initCharts();
+            document.getElementById('lastUpdatedLabel').innerText = t('lastUpdated') + appState.lastUpdated;
+            autoLoadData();
+        };
+    </script>
+</body>
+</html>
